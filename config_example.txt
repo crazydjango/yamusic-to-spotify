@@ -1,0 +1,5 @@
+[user2]
+yandex_access_token = user2_yandex_access_token
+spotify_client_id = user2_spotify_client_id
+spotify_client_secret = user2_spotify_client_secret
+spotify_redirect_uri = user2_spotify_redirect_uri
