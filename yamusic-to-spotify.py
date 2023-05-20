@@ -23,10 +23,12 @@ def initialize_spotify_client(user, config):
         client_id = config[user]['spotify_client_id']
         client_secret = config[user]['spotify_client_secret']
         redirect_uri = config[user]['spotify_redirect_uri']
-        return spotipy.Spotify(auth_manager=SpotifyOAuth(client_id=client_id,
-                                                         client_secret=client_secret,
-                                                         redirect_uri=redirect_uri,
-                                                         scope='playlist-modify-private'))
+        auth_manager = SpotifyOAuth(client_id=client_id,
+                                    client_secret=client_secret,
+                                    redirect_uri=redirect_uri,
+                                    scope='playlist-modify-private',
+                                    cache_path='.cache')
+        return spotipy.Spotify(auth_manager=auth_manager) 
     except Exception as e:
         logging.error(f'Error initializing Spotify client for user {user}: {e}')
         return None
