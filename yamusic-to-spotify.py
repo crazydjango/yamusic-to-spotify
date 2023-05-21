@@ -39,7 +39,10 @@ def transfer_playlists(user, yandex_client, spotify_client, list_only=False, sel
         return
 
     try:
-        yandex_playlists = yandex_client.users_playlists_list()
+        if liked:
+            yandex_playlists = [{'title': 'Liked Songs from Yandex', 'kind': None, 'owner': {'uid': None}}]
+        else:
+            yandex_playlists = yandex_client.users_playlists_list()
     except Exception as e:
         logging.error(f'Error fetching Yandex Music playlists for user {user}: {e}')
         return
@@ -59,6 +62,8 @@ def transfer_playlists(user, yandex_client, spotify_client, list_only=False, sel
             print(f'{i + 1}. {playlist["title"]}')
         selected_indices = list(map(int, input().split(',')))
         yandex_playlists = [yandex_playlists[i - 1] for i in selected_indices]
+
+    max_tracks_per_request = 100  # Set the desired maximum tracks per request
 
     for playlist in yandex_playlists:
         playlist_name = playlist['title']
@@ -91,6 +96,8 @@ def transfer_playlists(user, yandex_client, spotify_client, list_only=False, sel
             continue
 
         track_uris = []
+        not_found_songs = []  # List to keep track of songs not found
+        skip_all_not_found = False
 
         for track_short in playlist_info['tracks']:
             track_name = ''
@@ -117,36 +124,86 @@ def transfer_playlists(user, yandex_client, spotify_client, list_only=False, sel
             if search_result['tracks']['items']:
                 track_uri = search_result['tracks']['items'][0]['uri']
                 track_uris.append(track_uri)
-            else:
+            elif not skip_all_not_found:
                 # Perform a new search based only on the original song name
                 search_result = spotify_client.search(track_name, type='track', limit=5)
 
-                # Display a numbered list of songs found
-                print(f'Songs found on Spotify for "{track_name}" by "{artist_name}":')
-                for i, item in enumerate(search_result['tracks']['items']):
-                    song_info = f'{i + 1}. {item["name"]} - {", ".join([artist["name"] for artist in item["artists"]])}'
-                    if item['album']['name']:
-                        song_info += f' [{item["album"]["name"]}]'
-                    print(song_info)
-                    
-                # Prompt the user to choose a song from the list
+                # # Display a numbered list of songs found
+                # print()
+                # print(f'Songs found on Spotify for "{track_name}" by "{artist_name}":')
+                # print("----------------------------------------------------------------------------------------------------------------------------------------------------------")
+                # print("{:<4} {:<50} {:<50} {:<50}".format("#", "Song", "Artists", "Album"))
+                # print("----------------------------------------------------------------------------------------------------------------------------------------------------------")
+                # for i, item in enumerate(search_result['tracks']['items']):
+                #     song_info = "{:<4} {:<50} {:<50} {:<50}".format(i + 1, item["name"], ", ".join([artist["name"] for artist in item["artists"]]), item["album"]["name"])
+                #     print(song_info)
+                # print("----------------------------------------------------------------------------------------------------------------------------------------------------------")
+                # print()  # Print an empty line after the table
+
+                # # Prompt the user to choose a song from the list
+                # while True:
+                #     choice = input('Choose a song to add (enter the number, 0 to skip): ')
+                #     if choice.isdigit() and 0 <= int(choice) <= len(search_result['tracks']['items']):
+                #         break
+
+                # # Add the chosen song to the playlist if a valid choice was made
+                # if choice != '0':
+                #     chosen_track = search_result['tracks']['items'][int(choice) - 1]
+                #     track_uri = chosen_track['uri']
+                #     track_uris.append(track_uri)
+                # else:
+                #     logging.warning(f'Song not found on Spotify: "{track_name}" by "{artist_name}"')
+
                 while True:
-                    choice = input('Choose a song to add (enter the number, 0 to skip): ')
-                    if choice.isdigit() and 0 <= int(choice) <= len(search_result['tracks']['items']):
+                    if search_result['tracks']['items']:
+                        print()  # Print an empty line after the table
+                        print(f'Songs found on Spotify for "{track_name}" by "{artist_name}":')
+                        print("----------------------------------------------------------------------------------------------------------------------------------------------------------")
+                        print("{:<4} {:<50} {:<50} {:<50}".format("#", "Song", "Artists", "Album"))
+                        print("----------------------------------------------------------------------------------------------------------------------------------------------------------")
+                        for i, item in enumerate(search_result['tracks']['items']):
+                            song_info = "{:<4} {:<50} {:<50} {:<50}".format(i + 1, item["name"], ", ".join([artist["name"] for artist in item["artists"]]), item["album"]["name"])
+                            print(song_info)
+                        print("----------------------------------------------------------------------------------------------------------------------------------------------------------")
+                    else:
+                        print(f'No songs found on Spotify for "{track_name}" by "{artist_name}"')
+    
+                    choice = input('Choose a song to add (enter the number, 0 to skip, N for next results, S to skip all): ')
+                    if choice.isdigit() and 0 < int(choice) <= len(search_result['tracks']['items']):
                         break
+                    elif choice == '0':
+                        not_found_songs.append((track_name, artist_name))  # Add the not found song to the list
+                        break
+                    elif choice.lower() == 'n':
+                        if 'next' in search_result['tracks']:
+                            search_result = spotify_client.next(search_result['tracks'])
+                        else:
+                            print("No more results available.")
+                    elif choice.lower() == 's':
+                        skip_all_not_found = True
+                        not_found_songs.append((track_name, artist_name))
+                        break
+                    else:
+                        print("Invalid choice")
+                
+            else:
+                not_found_songs.append((track_name, artist_name))
+ 
+        # Create a log file with not found songs
+        if not_found_songs:
+            with open('not_found_songs.log', 'w', encoding='utf-8') as file:
+                file.write("Songs not found on Spotify:\n")
+                for song in not_found_songs:
+                    file.write(f"{song[0]} by {song[1]}\n")
 
-                # Add the chosen song to the playlist if a valid choice was made
-                if choice != '0':
-                    chosen_track = search_result['tracks']['items'][int(choice) - 1]
-                    track_uri = chosen_track['uri']
-                    track_uris.append(track_uri)
-                else:
-                    logging.warning(f'Song not found on Spotify: "{track_name}" by "{artist_name}"')
+        # Chunk the track URIs into smaller lists to avoid 413 HTTP error
+        chunked_track_uris = [track_uris[i:i+max_tracks_per_request] for i in range(0, len(track_uris), max_tracks_per_request)]
 
-        try:
-            spotify_client.playlist_add_items(spotify_playlist_id, track_uris)
-        except SpotifyException as e:
-            logging.error(f'Error adding tracks to Spotify playlist "{playlist_name}" for user {user}: {e}')
+        for chunked_track_uri in chunked_track_uris:
+            try:
+                spotify_client.playlist_add_items(spotify_playlist_id, chunked_track_uri)
+            except SpotifyException as e:
+                logging.error(f'Error adding tracks to Spotify playlist "{playlist_name}" for user {user}: {e}')
 
 def main():
     # Read configuration
